@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+    "@react-three/drei": "^10.0.3",
+    "@react-three/fiber": "^9.0.4",
+    "axios": "^1.8.1",
     "bootstrap": "^5.3.3",
     "cra-template": "1.2.0",
     "react": "^19.0.0",
