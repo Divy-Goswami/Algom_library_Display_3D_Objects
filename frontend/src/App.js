@@ -1,14 +1,7 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
-import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+import React, { useState, useEffect, useRef } from 'react';
 import './index.css';
 
-// API URL Constant
-const API_URL = 'http://localhost:5000/api/objects';
-
-// Custom models data (used when API fails or is unavailable)
+// Custom models data
 const customModels = [
   {
     id: 'insulin',
@@ -139,95 +132,21 @@ const App = () => {
   const [selectedObject, setSelectedObject] = useState(null);
   const [metadataVisible, setMetadataVisible] = useState(true);
   const [isNavOpen, setIsNavOpen] = useState(false);
-  const [objects, setObjects] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [filter, setFilter] = useState('All Materials');
-  const [modelLoaded, setModelLoaded] = useState(false);
-  const [downloading, setDownloading] = useState(false);
-  const [webGLError, setWebGLError] = useState(false);
 
   const mountRef = useRef(null);
-  const sceneRef = useRef(null);
-  const cameraRef = useRef(null);
-  const rendererRef = useRef(null);
-  const controlsRef = useRef(null);
-  const modelRef = useRef(null);
 
-  // Check WebGL support
+  // Setup for embedded models
   useEffect(() => {
-    try {
-      const canvas = document.createElement('canvas');
-      const context = canvas.getContext('webgl2') || canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-      if (!context) {
-        setWebGLError(true);
-        console.error('WebGL not supported');
-      }
-    } catch (e) {
-      setWebGLError(true);
-      console.error('WebGL check failed:', e);
-    }
-  }, []);
-
-  // Fetch Data
-  useEffect(() => {
-    const controller = new AbortController();
-    const fetchData = async () => {
-      try {
-        setLoading(true); // Start loading state
-        const response = await fetch(API_URL, { signal: controller.signal });
-  
-        // Check if the response is successful
-        if (!response.ok) {
-          throw new Error('Failed to fetch objects');
-        }
-  
-        const data = await response.json();
-  
-        // If no data is returned from the backend, use custom models
-        if (data.length === 0) {
-          console.warn('No data available from the backend, using custom models.');
-          setObjects(customModels); // Use custom models
-        } else {
-          // Combine API data with custom models
-          setObjects([...data, ...customModels]); 
-        }
-      } catch (error) {
-        if (error.name !== 'AbortError') {
-          console.error('Error fetching objects:', error);
-          console.log('Using custom models as fallback');
-          setObjects(customModels); // Use custom models on error
-        }
-      } finally {
-        setLoading(false); // Stop loading state
-      }
-    };
-  
-    fetchData(); // Call the fetch function
-  
-    return () => controller.abort(); // Abort the fetch on component unmount
-  }, []);
-
-  // Modified setupScene to handle embedded models
-  const setupScene = useCallback(() => {
     if (!selectedObject || !mountRef.current) return;
 
-    // If this is an embedded model (like from Sketchfab), handle differently
+    // Handle embedded models
     if (selectedObject.is_embedded && selectedObject.embed_code) {
-      const cleanupScene = () => {
-        // Clean up existing Three.js scene if it exists
-        if (sceneRef.current) {
-          // Dispose of all objects and textures
-          // ... existing cleanup code ...
-        }
-        if (mountRef.current) {
-          mountRef.current.innerHTML = '';
-        }
-      };
-
-      cleanupScene();
-      setModelLoaded(true);
-
+      // Clean up any existing content
+      mountRef.current.innerHTML = '';
+      
       // Create wrapper for the embedded iframe
       const embedWrapper = document.createElement('div');
       embedWrapper.className = 'embed-wrapper';
@@ -236,248 +155,15 @@ const App = () => {
       embedWrapper.innerHTML = selectedObject.embed_code;
       
       // Add the embedded content
+      mountRef.current.appendChild(embedWrapper);
+    }
+
+    return () => {
       if (mountRef.current) {
-        mountRef.current.appendChild(embedWrapper);
+        mountRef.current.innerHTML = '';
       }
-
-      return () => {
-        if (mountRef.current) {
-          mountRef.current.innerHTML = '';
-        }
-      };
-    } else {
-      // Handle regular GLTF models with Three.js renderer
-      // ... existing setupScene code for GLTF models ...
-
-      const cleanupScene = () => {
-        // Clean up existing scene
-        if (sceneRef.current) {
-          try {
-            sceneRef.current.traverse((object) => {
-              if (object.geometry) object.geometry.dispose();
-              if (object.material) {
-                if (Array.isArray(object.material)) {
-                  object.material.forEach(material => material.dispose());
-                } else {
-                  object.material.dispose();
-                }
-              }
-              if (object.dispose) object.dispose();
-            });
-          } catch (e) {
-            console.error("Error disposing scene objects:", e);
-          }
-        }
-
-        if (rendererRef.current) {
-          try {
-            rendererRef.current.dispose();
-            rendererRef.current.forceContextLoss();
-            rendererRef.current = null;
-          } catch (e) {
-            console.error("Error disposing renderer:", e);
-          }
-        }
-
-        if (controlsRef.current) {
-          try {
-            controlsRef.current.dispose();
-            controlsRef.current = null;
-          } catch (e) {
-            console.error("Error disposing controls:", e);
-          }
-        }
-        if (mountRef.current) {
-          mountRef.current.innerHTML = '';
-        }
-      };
-
-      cleanupScene();
-      setModelLoaded(false);
-
-      try {
-        // Create new scene, camera, and renderer
-        const scene = new THREE.Scene();
-        scene.background = new THREE.Color(darkMode ? 0x202020 : 0xffffff);
-        
-        const camera = new THREE.PerspectiveCamera(
-          75,
-          mountRef.current.clientWidth / mountRef.current.clientHeight,
-          0.1,
-          1000
-        );
-        
-        // Try to create renderer with proper error handling
-        let renderer;
-        try {
-          renderer = new THREE.WebGLRenderer({ 
-            antialias: true,
-            powerPreference: "high-performance",
-            failIfMajorPerformanceCaveat: true
-          });
-          renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight);
-          renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Limit pixel ratio to prevent performance issues
-          renderer.outputColorSpace = THREE.SRGBColorSpace;
-        } catch (e) {
-          console.error("WebGL Renderer creation failed:", e);
-          setWebGLError(true);
-          return;
-        }
-        
-        // Add lights to the scene
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-        scene.add(ambientLight);
-        
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
-        directionalLight.position.set(5, 10, 7.5);
-        scene.add(directionalLight);
-
-        // Attach renderer to DOM
-        if (mountRef.current) {
-          mountRef.current.innerHTML = '';
-          mountRef.current.appendChild(renderer.domElement);
-        }
-
-        // Add orbit controls
-        const controls = new OrbitControls(camera, renderer.domElement);
-        controls.enableDamping = true;
-        controls.dampingFactor = 0.25;
-
-        // Save references
-        sceneRef.current = scene;
-        cameraRef.current = camera;
-        rendererRef.current = renderer;
-        controlsRef.current = controls;
-
-        // Show loading indicator
-        const loadingElem = document.createElement('div');
-        loadingElem.className = 'model-loading';
-        loadingElem.textContent = 'Loading 3D model...';
-        mountRef.current.appendChild(loadingElem);
-
-        // Load the model based on selectedObject
-        const loader = new GLTFLoader();
-        const modelUrl = selectedObject.model_url || "./Models/martinskapelle_new.glb";
-        
-        loader.load(
-          modelUrl,
-          (gltf) => {
-            try {
-              // Remove loading indicator
-              if (loadingElem.parentNode) {
-                loadingElem.parentNode.removeChild(loadingElem);
-              }
-
-              const model = gltf.scene;
-              scene.add(model);
-              
-              // Save reference to the model for download functionality
-              modelRef.current = model.clone(); // Create a clone to ensure we have a clean copy for export
-              setModelLoaded(true);
-
-              // Compute bounding box to center camera
-              const box = new THREE.Box3().setFromObject(model);
-              const size = box.getSize(new THREE.Vector3()).length();
-              const center = box.getCenter(new THREE.Vector3());
-
-              // Position camera to view the entire model
-              camera.position.set(center.x, center.y, center.z + size * 1.5);
-              camera.lookAt(center);
-              
-              // Set controls target to center of the model
-              controls.target.set(center.x, center.y, center.z);
-              controls.update();
-            } catch (e) {
-              console.error("Error processing loaded model:", e);
-              if (loadingElem.parentNode) {
-                loadingElem.textContent = 'Error processing model';
-              }
-            }
-          },
-          (xhr) => {
-            // Update loading progress if needed
-            const percentComplete = Math.round((xhr.loaded / xhr.total) * 100);
-            if (loadingElem) {
-              loadingElem.textContent = `Loading 3D model: ${percentComplete}%`;
-            }
-          },
-          (error) => {
-            console.error('Error loading 3D model:', error);
-            if (loadingElem.parentNode) {
-              loadingElem.textContent = 'Error loading model';
-            }
-          }
-        );
-
-        // Animation loop
-        let animationFrameId;
-        const animate = () => {
-          try {
-            animationFrameId = requestAnimationFrame(animate);
-            
-            if (controlsRef.current) {
-              controlsRef.current.update();
-            }
-            
-            if (rendererRef.current && sceneRef.current && cameraRef.current) {
-              rendererRef.current.render(sceneRef.current, cameraRef.current);
-            } else {
-              cancelAnimationFrame(animationFrameId);
-            }
-          } catch (e) {
-            console.error("Render loop error:", e);
-            cancelAnimationFrame(animationFrameId);
-            setWebGLError(true);
-          }
-        };
-        
-        animate();
-
-        // Cleanup function
-        return () => {
-          cancelAnimationFrame(animationFrameId);
-          cleanupScene();
-        };
-      } catch (e) {
-        console.error("Scene setup error:", e);
-        setWebGLError(true);
-        return () => {};
-      }
-    }
-  }, [selectedObject, darkMode]);
-
-  // Update scene background when dark mode changes
-  useEffect(() => {
-    if (sceneRef.current) {
-      sceneRef.current.background = new THREE.Color(darkMode ? 0x202020 : 0xffffff);
-    }
-  }, [darkMode]);
-
-  // Initialize or update scene when selected object changes
-  useEffect(() => {
-    if (!selectedObject) return;
-    
-    const cleanup = setupScene();
-    return cleanup;
-  }, [selectedObject, setupScene]);
-
-  // Resize handler
-  const handleResize = useCallback(() => {
-    if (!mountRef.current || !rendererRef.current || !cameraRef.current) return;
-    
-    // Update camera aspect ratio
-    cameraRef.current.aspect = mountRef.current.clientWidth / mountRef.current.clientHeight;
-    cameraRef.current.updateProjectionMatrix();
-    
-    // Update renderer size
-    rendererRef.current.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight);
-  }, []);
-
-  // Add resize event listener
-  useEffect(() => {
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [handleResize]);
+    };
+  }, [selectedObject]);
 
   // Toggle fullscreen
   const toggleFullscreen = () => {
@@ -503,10 +189,10 @@ const App = () => {
   };
 
   // Get unique materials for filter dropdown
-  const materialOptions = ['All Materials', ...new Set(objects.filter(obj => obj.material).map(obj => obj.material))];
+  const materialOptions = ['All Materials', ...new Set(customModels.filter(obj => obj.material).map(obj => obj.material))];
 
   // Filter objects based on search term and selected material
-  const filteredObjects = objects.filter(obj => {
+  const filteredObjects = customModels.filter(obj => {
     const matchesSearch = !searchTerm || 
       (obj.name && obj.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
       (obj.description && obj.description.toLowerCase().includes(searchTerm.toLowerCase())) ||
@@ -517,59 +203,21 @@ const App = () => {
     return matchesSearch && matchesMaterial;
   });
 
-  // Modify downloadModel function to handle embedded models
-  const downloadModel = () => {
+  // View original model on Sketchfab
+  const viewOriginalModel = () => {
     if (selectedObject && selectedObject.is_embedded) {
-      // For embedded models, redirect to original source
-      window.open(`https://sketchfab.com/3d-models/human-insulin-molecular-model-and-sonification-0ba70b315d984ac294f24bc9f4549fc2`, '_blank');
-      return;
-    }
-    
-    if (!modelRef.current || !selectedObject || webGLError) return;
-    
-    setDownloading(true);
-    
-    try {
-      // Create a new exporter
-      const exporter = new GLTFExporter();
-      
-      // Export the current model
-      exporter.parse(
-        modelRef.current,
-        (gltf) => {
-          try {
-            // Create a Blob from the exported GLB
-            const blob = new Blob([gltf], { type: 'application/octet-stream' });
-            
-            // Create a download link
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(blob);
-            link.download = `${selectedObject.name || 'model'}.glb`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-          } catch (e) {
-            console.error("Error creating download link:", e);
-          } finally {
-            setDownloading(false);
-          }
-        },
-        (error) => {
-          console.error('Error exporting model:', error);
-          setDownloading(false);
-        },
-        { binary: true } // Export as binary GLB
-      );
-    } catch (e) {
-      console.error("Error initiating export:", e);
-      setDownloading(false);
+      // Extract Sketchfab model ID from embed code
+      const modelIdMatch = selectedObject.embed_code.match(/models\/([a-f0-9]+)\/embed/);
+      if (modelIdMatch && modelIdMatch[1]) {
+        window.open(`https://sketchfab.com/3d-models/${modelIdMatch[1]}`, '_blank');
+      }
     }
   };
 
   return (
     <div className={`app-container ${darkMode ? 'dark-mode' : 'light-mode'}`}>
       <Navbar 
-        isNavOpen={isNavOpen}
+        isNavOpen={isNavOpen} 
         setIsNavOpen={setIsNavOpen}
         darkMode={darkMode}
         setDarkMode={setDarkMode}
@@ -596,13 +244,13 @@ const App = () => {
           </div>
           <div className="hero-stats">
             <div className="stat-item">
-              <span className="stat-number">{objects.length}</span>
+              <span className="stat-number">{customModels.length}</span>
               <span className="stat-label">3D Models</span>
             </div>
-            {/* <div className="stat-item">
-              <span className="stat-number">{new Set(objects.filter(obj => obj.material).map(obj => obj.material)).size}</span>
+            <div className="stat-item">
+              <span className="stat-number">{new Set(customModels.filter(obj => obj.material).map(obj => obj.material)).size}</span>
               <span className="stat-label">Materials</span>
-            </div> */}
+            </div>
             <div className="stat-item">
               <span className="stat-number">24/7</span>
               <span className="stat-label">Access</span>
@@ -621,13 +269,13 @@ const App = () => {
           <div className="search-filter-container">
             <div className="search-input-wrapper">
               <i className="search-icon">🔍</i>
-              <input
-                type="text"
+          <input 
+            type="text" 
                 placeholder="Search by name, material, or description..."
                 className="search-input"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
               {searchTerm && (
                 <button 
                   className="clear-search-btn" 
@@ -639,15 +287,15 @@ const App = () => {
               )}
             </div>
             <div className="select-wrapper">
-              <select 
+          <select 
                 className="filter-select"
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-              >
-                {materialOptions.map(material => (
-                  <option key={material} value={material}>{material}</option>
-                ))}
-              </select>
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          >
+            {materialOptions.map(material => (
+              <option key={material} value={material}>{material}</option>
+            ))}
+          </select>
               <span className="select-arrow">▼</span>
             </div>
           </div>
@@ -664,7 +312,6 @@ const App = () => {
               <button 
                 className="btn-primary" 
                 onClick={toggleFullscreen}
-                disabled={webGLError}
               >
                 Fullscreen
               </button>
@@ -674,13 +321,14 @@ const App = () => {
               >
                 {metadataVisible ? 'Hide Info' : 'Show Info'}
               </button>
+              {selectedObject && selectedObject.is_embedded && (
               <button
-                className={`download-btn ${(!modelLoaded || downloading || webGLError) ? 'disabled' : ''}`}
-                onClick={downloadModel}
-                disabled={!modelLoaded || downloading || webGLError}
+                  className="download-btn"
+                  onClick={viewOriginalModel}
               >
-                {downloading ? 'Downloading...' : 'Download Model'}
+                  View on Sketchfab
               </button>
+              )}
             </div>
 
             <div className="model-viewer" ref={mountRef}>
@@ -689,10 +337,6 @@ const App = () => {
               ) : !selectedObject ? (
                 <div className="select-model-message">
                   <p>Select an artifact from the list below to view</p>
-                </div>
-              ) : webGLError ? (
-                <div className="webgl-error-message">
-                  <p>WebGL rendering error. Please try a different browser or device.</p>
                 </div>
               ) : null}
             </div>
@@ -735,7 +379,7 @@ const App = () => {
                             <img src={obj.thumbnail} alt={obj.name} />
                           </div>
                         ) : (
-                          <div className="thumbnail-image"></div>
+                        <div className="thumbnail-image"></div>
                         )}
                       </td>
                       <td>{obj.name}</td>
@@ -785,47 +429,12 @@ const App = () => {
           box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.3);
         }
 
-        .download-btn.disabled {
-          background-color: #cccccc;
-          cursor: not-allowed;
-          opacity: 0.7;
-        }
-
         .dark-mode .download-btn {
           background-color: #3a8a3e;
         }
 
         .dark-mode .download-btn:hover {
           background-color: #327a36;
-        }
-
-        .dark-mode .download-btn.disabled {
-          background-color: #555555;
-        }
-
-        .webgl-error-message {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          height: 100%;
-          padding: 20px;
-          text-align: center;
-          background-color: rgba(255, 0, 0, 0.1);
-          border: 1px solid rgba(255, 0, 0, 0.3);
-          border-radius: 4px;
-        }
-
-        .webgl-error-message p {
-          color: #d32f2f;
-          font-weight: 500;
-        }
-
-        .dark-mode .webgl-error-message {
-          background-color: rgba(255, 0, 0, 0.2);
-        }
-
-        .dark-mode .webgl-error-message p {
-          color: #ff6659;
         }
 
         .embed-wrapper {
